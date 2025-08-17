@@ -3,48 +3,125 @@ import { AnimatePresence, useAnimate, usePresence } from "framer-motion";
 import React, { useEffect, useState } from "react";
 import { FiClock, FiPlus, FiTrash2 } from "react-icons/fi";
 import { motion } from "framer-motion";
+import { localDB } from "@/database/localDB";
+import { deleteRow, getAllTasks, insertTask, updateCheckbox } from "@/app/action";
+import { useLiveQuery } from "dexie-react-hooks";
+
+ async function initialFetchTasks() {
+      try {
+    // 1. Fetch tasks from server
+    const serverTasks = await getAllTasks();
+    
+    // 2. Get pending operations from queue
+    const pendingOperations = await localDB.queueTasks.toArray();
+    
+    // 3. Start a transaction for atomic updates
+    await localDB.transaction('rw', localDB.tasks, async () => {
+      // 4. Clear existing tasks
+      await localDB.tasks.clear();
+      
+      // 5. Add server tasks to localDB, preserving pending states
+      for (const serverTask of serverTasks) {
+        // Check if this task has pending operations
+        const isPending = pendingOperations.some(op => op.id === serverTask.id);
+        
+        await localDB.tasks.add({
+          ...serverTask,
+          PendingState: isPending ? 'Syncing...' : ''
+        });
+      }
+      
+      // 6. Add any local-only tasks that are pending creation
+      const pendingAdds = pendingOperations.filter(op => op.action === 'addTask');
+      for (const pendingAdd of pendingAdds) {
+        const exists = serverTasks.some(t => t.id === pendingAdd.id);
+        if (!exists) {
+          await localDB.tasks.add({
+            id: pendingAdd.id,
+            text: pendingAdd.text,
+            checked: pendingAdd.checked,
+            time: pendingAdd.time,
+            PendingState: 'Adding...'
+          });
+        }
+      }
+    });
+    
+    console.log('LocalDB successfully synced with server');
+  } catch (error) {
+    console.error('Failed to sync server tasks to localDB:', error);
+  }
+};
+
+// Queue processing function
+const processQueue = async () => {
+  console.log('!!!')
+  const queue = await localDB.queueTasks.toArray();
+  if (!queue.length) return;
+  
+  for (const task of queue) {
+    try {
+      switch (task.action) {
+        case "addTask":
+          await insertTask({ id: task.id, ...task });
+          await localDB.tasks.update(task.id, { PendingState: '' });
+          break;
+        case "updateCheckbox":
+          await updateCheckbox(task.id);
+          await localDB.tasks.update(task.id, { PendingState: '' });
+          break;
+        case "deleteRow":
+          await deleteRow(task.id);
+          await localDB.tasks.delete(task.id);
+          break;
+      }
+      await localDB.queueTasks.delete(task.id);
+    } catch (err) {
+      console.error("Queue processing error:", err);
+      break; // Stop processing on failure
+    }
+  }
+};
 
 export const VanishList = () => {
-  const [todos, setTodos] = useState([
-    {
-      id: 1,
-      text: "Take out trash",
-      checked: false,
-      time: "5 mins",
-    },
-    {
-      id: 2,
-      text: "Do laundry",
-      checked: false,
-      time: "10 mins",
-    },
-    {
-      id: 3,
-      text: "Have existential crisis",
-      checked: true,
-      time: "12 hrs",
-    },
-    {
-      id: 4,
-      text: "Get dog food",
-      checked: false,
-      time: "1 hrs",
-    },
-  ]);
+  const todos = useLiveQuery(() => localDB.tasks.toArray(), []);
 
-  const handleCheck = (id) => {
-    setTodos((pv) =>
-      pv.map((t) => (t.id === id ? { ...t, checked: !t.checked } : t))
-    );
-  };
+  useEffect(() => {
+    initialFetchTasks();
+    processQueue();
+    const intervalId = setInterval(processQueue, 10 * 1000);
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, []);
 
-  const removeElement = (id) => {
+  const handleCheck = async(id) => {
+    // localDb
+    console.log('id', id, 'type:', typeof id)
+    await localDB.tasks.update(id, {  
+    checked: !(todos.find(task => task.id === id).checked),
+    PendingState: 'checking...'
+    });
     try{
-      throw(error)
-      setTodos((pv) => pv.filter((t) => t.id !== id));
+      await updateCheckbox(id)
+      await localDB.tasks.update(id, { PendingState:'' });
     }
     catch(err){
+      console.log("checkerr:",err)
+      await localDB.queueTasks.add({id, action:"updateCheckbox"})
+    }
+  };
 
+  const removeElement = async(id) => {
+    // localDb
+    await localDB.tasks.update(id,{PendingState: 'Deleting...'});
+    try{
+      await deleteRow(id)
+      await localDB.tasks.delete(id)
+    }
+    catch(err){
+      console.log("deleteErr:",err)
+      await localDB.ququeTasks.add({id, action:"deleteRow"})
     }
   };
 
@@ -63,7 +140,7 @@ export const VanishList = () => {
           handleCheck={handleCheck}
         />
       </div>
-      <Form setTodos={setTodos} />
+      <Form />
     </section>
   );
 };
@@ -77,28 +154,27 @@ const Header = () => {
   );
 };
 
-const Form = ({ setTodos }) => {
+const Form = () => {
   const [visible, setVisible] = useState(false);
 
   const [time, setTime] = useState(15);
   const [text, setText] = useState("");
   const [unit, setUnit] = useState("mins");
 
-  const handleSubmit = () => {
+  const handleSubmit = async() => {
     if (!text.length) {
       return;
     }
-
-    setTodos((pv) => [
-      {
-        id: Math.random(),
-        text,
-        checked: false,
-        time: `${time} ${unit}`,
-      },
-      ...pv,
-    ]);
-
+    // localDb
+    const task = {text: text, checked:false, time: `${time} ${unit}`}
+    const id = await localDB.tasks.add({...task , PendingState:'Adding...'});
+    try{
+      await insertTask({id:id, ...task})
+      await localDB.tasks.update(id, { PendingState:'' })
+    } catch(err){
+        console.log("adderr:",err)
+        await localDB.queueTasks.add({id:id, ...task, action:"addTask"});
+    }
     setTime(15);
     setText("");
     setUnit("mins");
@@ -173,7 +249,7 @@ const Todos = ({ todos, handleCheck, removeElement }) => {
   return (
     <div className="w-full space-y-3">
       <AnimatePresence>
-        {todos.map((t) => (
+        {todos?.map((t) => (
           <Todo
             handleCheck={handleCheck}
             removeElement={removeElement}
@@ -181,6 +257,8 @@ const Todos = ({ todos, handleCheck, removeElement }) => {
             key={t.id}
             checked={t.checked}
             time={t.time}
+            PendingState={t.PendingState}
+
           >
             {t.text}
           </Todo>
@@ -190,7 +268,7 @@ const Todos = ({ todos, handleCheck, removeElement }) => {
   );
 };
 
-const Todo = ({ removeElement, handleCheck, id, children, checked, time }) => {
+const Todo = ({ removeElement, handleCheck, id, children, checked, time, PendingState}) => {
   const [isPresent, safeToRemove] = usePresence();
   const [scope, animate] = useAnimate();
 
@@ -252,6 +330,9 @@ const Todo = ({ removeElement, handleCheck, id, children, checked, time }) => {
         className={`text-white transition-colors ${checked && "text-zinc-400"}`}
       >
         {children}
+      </p>
+      <p className={`transition-colors ${PendingState==="Deleting..."? 'text-red-400':'text-white'}`}>
+        {PendingState}
       </p>
       <div className="ml-auto flex gap-1.5">
         <div className="flex items-center gap-1.5 whitespace-nowrap rounded bg-zinc-800 px-1.5 py-1 text-xs text-zinc-400">

@@ -9,7 +9,7 @@ export const getAllTasks= async () => {
 }
 
 export const insertTask = async (task) => {
-    await db.insert(testTable).values(task) 
+    await db.insert(tasksTable).values(task) 
 }
 
 export const insertTodo = async (preState, data) => {
