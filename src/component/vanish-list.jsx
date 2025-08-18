@@ -108,7 +108,7 @@ export const VanishList = () => {
     }
     catch(err){
       console.log("checkerr:",err)
-      await localDB.queueTasks.add({id, action:"updateCheckbox"})
+      await localDB.queueTasks.put({id, action:"updateCheckbox"})
     }
   };
 
@@ -121,7 +121,7 @@ export const VanishList = () => {
     }
     catch(err){
       console.log("deleteErr:",err)
-      await localDB.ququeTasks.add({id, action:"deleteRow"})
+      await localDB.queueTasks.put({id, action:"deleteRow"})
     }
   };
 
@@ -173,7 +173,7 @@ const Form = () => {
       await localDB.tasks.update(id, { PendingState:'' })
     } catch(err){
         console.log("adderr:",err)
-        await localDB.queueTasks.add({id:id, ...task, action:"addTask"});
+        await localDB.queueTasks.put({id:id, ...task, action:"addTask"});
     }
     setTime(15);
     setText("");
