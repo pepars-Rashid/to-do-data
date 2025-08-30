@@ -6,3 +6,10 @@ export const tasksTable = pgTable('tasks', {
   checked: boolean('checked').notNull().default(false),
   time: text('time').notNull(),
 });
+
+export const tasksTable2 = pgTable('tasks2', {
+  id: integer('id').primaryKey(),
+  text: varchar({ length: 255 }).notNull(),
+  checked: boolean('checked').notNull().default(false),
+  time: text('time').notNull(),
+});

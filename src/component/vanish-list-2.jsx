@@ -3,29 +3,29 @@ import { AnimatePresence, useAnimate, usePresence } from "framer-motion";
 import React, { useEffect, useState } from "react";
 import { FiClock, FiPlus, FiTrash2 } from "react-icons/fi";
 import { motion } from "framer-motion";
-import { localDB } from "@/database/localDB";
-import { deleteRow, getAllTasks, insertTask, updateCheckbox } from "@/app/action";
+import { localDB2 } from "@/database/localDB";
+import { deleteRow2, getAllTasks2, insertTask2, updateCheckbox2 } from "@/app/action";
 import { useLiveQuery } from "dexie-react-hooks";
 
- async function initialFetchTasks() {
-      try {
+async function initialFetchTasks2() {
+  try {
     // 1. Fetch tasks from server
-    const serverTasks = await getAllTasks();
+    const serverTasks = await getAllTasks2();
     
     // 2. Get pending operations from queue
-    const pendingOperations = await localDB.queueTasks.toArray();
+    const pendingOperations = await localDB2.queueTasks.toArray();
     
     // 3. Start a transaction for atomic updates
-    await localDB.transaction('rw', localDB.tasks, async () => {
+    await localDB2.transaction('rw', localDB2.tasks, async () => {
       // 4. Clear existing tasks
-      await localDB.tasks.clear();
+      await localDB2.tasks.clear();
       
-      // 5. Add server tasks to localDB, preserving pending states
+      // 5. Add server tasks to localDB2, preserving pending states
       for (const serverTask of serverTasks) {
         // Check if this task has pending operations
-        const isPending = pendingOperations.some(op => op.id === serverTask.id);
+        const isPending = pendingOperations.some(op => op.taskID === serverTask.id);
         
-        await localDB.tasks.add({
+        await localDB2.tasks.add({
           ...serverTask,
           PendingState: isPending ? 'Syncing...' : ''
         });
@@ -34,10 +34,10 @@ import { useLiveQuery } from "dexie-react-hooks";
       // 6. Add any local-only tasks that are pending creation
       const pendingAdds = pendingOperations.filter(op => op.action === 'addTask');
       for (const pendingAdd of pendingAdds) {
-        const exists = serverTasks.some(t => t.id === pendingAdd.id);
+        const exists = serverTasks.some(t => t.id === pendingAdd.taskID);
         if (!exists) {
-          await localDB.tasks.add({
-            id: pendingAdd.id,
+          await localDB2.tasks.add({
+            id: pendingAdd.taskID,
             text: pendingAdd.text,
             checked: pendingAdd.checked,
             time: pendingAdd.time,
@@ -47,81 +47,93 @@ import { useLiveQuery } from "dexie-react-hooks";
       }
     });
     
-    console.log('LocalDB successfully synced with server');
+    console.log('LocalDB2 successfully synced with server');
   } catch (error) {
-    console.error('Failed to sync server tasks to localDB:', error);
+    console.error('Failed to sync server tasks to localDB2:', error);
   }
-};
+}
 
-// Queue processing function
-const processQueue = async () => {
-  console.log('!!!')
-  const queue = await localDB.queueTasks.toArray();
+// Queue processing function for localDB2
+const processQueue2 = async () => {
+  console.log('Processing queue2...')
+  const queue = await localDB2.queueTasks.toArray();
   if (!queue.length) return;
   
-  for (const task of queue) {
+  for (const queueItem of queue) {
     try {
-      switch (task.action) {
+      switch (queueItem.action) {
         case "addTask":
-          await insertTask({ id: task.id, ...task });
-          await localDB.tasks.update(task.id, { PendingState: '' });
+          await insertTask2({ id: queueItem.taskID, text: queueItem.text, checked: queueItem.checked, time: queueItem.time });
+          await localDB2.tasks.update(queueItem.taskID, { PendingState: '' });
           break;
         case "updateCheckbox":
-          await updateCheckbox(task.id);
-          await localDB.tasks.update(task.id, { PendingState: '' });
+          await updateCheckbox2(queueItem.taskID);
+          await localDB2.tasks.update(queueItem.taskID, { PendingState: '' });
           break;
         case "deleteRow":
-          await deleteRow(task.id);
-          await localDB.tasks.delete(task.id);
+          await deleteRow2(queueItem.taskID);
+          await localDB2.tasks.delete(queueItem.taskID);
           break;
       }
-      await localDB.queueTasks.delete(task.id);
+      await localDB2.queueTasks.delete(queueItem.id);
     } catch (err) {
-      console.error("Queue processing error:", err);
+      console.error("Queue2 processing error:", err);
       break; // Stop processing on failure
     }
   }
 };
 
-export const VanishList = () => {
-  const todos = useLiveQuery(() => localDB.tasks.toArray(), []);
+export const VanishList2 = () => {
+  const todos = useLiveQuery(() => localDB2.tasks.toArray(), []);
 
   useEffect(() => {
-    initialFetchTasks();
-    processQueue();
-    const intervalId = setInterval(processQueue, 10 * 1000);
+    initialFetchTasks2();
+    processQueue2();
+    const intervalId = setInterval(processQueue2, 10 * 1000);
     return () => {
       clearInterval(intervalId);
     };
   }, []);
 
   const handleCheck = async(id) => {
-    // localDb
+    // localDB2
     console.log('id', id, 'type:', typeof id)
-    await localDB.tasks.update(id, {  
-    checked: !(todos.find(task => task.id === id).checked),
-    PendingState: 'checking...'
+    await localDB2.tasks.update(id, {  
+      checked: !(todos.find(task => task.id === id).checked),
+      PendingState: 'checking...'
     });
     try{
-      await updateCheckbox(id)
-      await localDB.tasks.update(id, { PendingState:'' });
+      await updateCheckbox2(id)
+      await localDB2.tasks.update(id, { PendingState:'' });
     }
     catch(err){
       console.log("checkerr:",err)
-      await localDB.queueTasks.put({id, action:"updateCheckbox"})
+      await localDB2.queueTasks.add({
+        taskID: id, 
+        action: "updateCheckbox",
+        text: todos.find(task => task.id === id).text,
+        checked: todos.find(task => task.id === id).checked,
+        time: todos.find(task => task.id === id).time
+      })
     }
   };
 
   const removeElement = async(id) => {
-    // localDb
-    await localDB.tasks.update(id,{PendingState: 'Deleting...'});
+    // localDB2
+    await localDB2.tasks.update(id,{PendingState: 'Deleting...'});
     try{
-      await deleteRow(id)
-      await localDB.tasks.delete(id)
+      await deleteRow2(id)
+      await localDB2.tasks.delete(id)
     }
     catch(err){
       console.log("deleteErr:",err)
-      await localDB.queueTasks.put({id, action:"deleteRow"})
+      await localDB2.queueTasks.add({
+        taskID: id, 
+        action: "deleteRow",
+        text: todos.find(task => task.id === id).text,
+        checked: todos.find(task => task.id === id).checked,
+        time: todos.find(task => task.id === id).time
+      })
     }
   };
 
@@ -149,14 +161,13 @@ const Header = () => {
   return (
     <div className="mb-6">
       <h1 className="text-xl font-medium text-white">Good morning! ☀️</h1>
-      <p className="text-zinc-400">Let's see what we've got to do today.</p>
+      <p className="text-zinc-400">Let's see what we've got to do today. (Method 2)</p>
     </div>
   );
 };
 
 const Form = () => {
   const [visible, setVisible] = useState(false);
-
   const [time, setTime] = useState(15);
   const [text, setText] = useState("");
   const [unit, setUnit] = useState("mins");
@@ -165,18 +176,25 @@ const Form = () => {
     if (!text.length) {
       return;
     }
-    // localDb
+    // localDB2
     const task = {text: text, checked:false, time: `${time} ${unit}`}
     setTime(15);
     setText("");
     setUnit("mins");
-    const id = await localDB.tasks.add({...task , PendingState:'Adding...'});
+    const id = await localDB2.tasks.add({...task , PendingState:'Adding...'});
     try{
-      await insertTask({id:id, ...task})
-      await localDB.tasks.update(id, { PendingState:'' })
+      await insertTask2({id:id, ...task})
+      await localDB2.tasks.update(id, { PendingState:'' })
     } catch(err){
         console.log("adderr:",err)
-        await localDB.queueTasks.put({id:id, ...task, action:"addTask"});
+        await localDB2.queueTasks.add({
+          id: Date.now(), // Auto-increment ID for queue
+          taskID: id,
+          text: task.text,
+          checked: task.checked,
+          time: task.time,
+          action: "addTask"
+        });
     }
     
   };
@@ -259,7 +277,6 @@ const Todos = ({ todos, handleCheck, removeElement }) => {
             checked={t.checked}
             time={t.time}
             PendingState={t.PendingState}
-
           >
             {t.text}
           </Todo>
@@ -324,8 +341,8 @@ const Todo = ({ removeElement, handleCheck, id, children, checked, time, Pending
         type="checkbox"
         checked={checked}
         onChange={() => handleCheck(id)}
-        disabled={PendingState !== ''}
-        className={`size-4 accent-indigo-400 ${PendingState !== '' ? 'cursor-not-allowed opacity-50' : ''}`}
+        disabled={PendingState === 'Deleting...'}
+        className={`size-4 accent-indigo-400 ${PendingState === 'Deleting...' ? 'cursor-not-allowed opacity-50' : ''}`}
       />
 
       <p
@@ -343,9 +360,9 @@ const Todo = ({ removeElement, handleCheck, id, children, checked, time, Pending
         </div>
         <button
           onClick={() => removeElement(id)}
-          disabled={PendingState !== ''}
+          disabled={PendingState === 'Deleting...'}
           className={`rounded px-1.5 py-1 text-xs transition-colors ${
-            PendingState !== '' 
+            PendingState === 'Deleting...' 
               ? 'bg-zinc-600/20 text-zinc-500 cursor-not-allowed' 
               : 'bg-red-300/20 text-red-300 hover:bg-red-600 hover:text-red-200'
           }`}
