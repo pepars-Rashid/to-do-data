@@ -323,7 +323,8 @@ const Todo = ({ removeElement, handleCheck, id, children, checked, time, Pending
         type="checkbox"
         checked={checked}
         onChange={() => handleCheck(id)}
-        className="size-4 accent-indigo-400"
+        disabled={PendingState !== ''}
+        className={`size-4 accent-indigo-400 ${PendingState !== '' ? 'cursor-not-allowed opacity-50' : ''}`}
       />
 
       <p
@@ -341,7 +342,12 @@ const Todo = ({ removeElement, handleCheck, id, children, checked, time, Pending
         </div>
         <button
           onClick={() => removeElement(id)}
-          className="rounded bg-red-300/20 px-1.5 py-1 text-xs text-red-300 transition-colors hover:bg-red-600 hover:text-red-200"
+          disabled={PendingState !== ''}
+          className={`rounded px-1.5 py-1 text-xs transition-colors ${
+            PendingState !== '' 
+              ? 'bg-zinc-600/20 text-zinc-500 cursor-not-allowed' 
+              : 'bg-red-300/20 text-red-300 hover:bg-red-600 hover:text-red-200'
+          }`}
         >
           <FiTrash2 />
         </button>
